@@ -1,0 +1,7 @@
+{
+  "name": "Unifuse AI Platform",
+  "description": "An AI-powered higher education platform for enrollment, student success, advancement, and operational excellence.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
