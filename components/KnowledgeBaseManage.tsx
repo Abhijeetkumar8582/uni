@@ -1,6 +1,9 @@
 
 import React, { useState, useRef } from 'react';
 import { AppView, KBDocument, KBFolder, CustomMetaTag, KBChunk } from '../types';
+import { extractTextFromFile } from '../services/documentExtract';
+import { chunkText, approxTokenCount, embedTexts, cosineSimilarity } from '../services/embeddingService';
+import { answerFromContext, answerFromWeb } from '../services/geminiService';
 
 // Professional SVG Icons
 const Icons = {
@@ -17,7 +20,8 @@ const Icons = {
   Globe: () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>,
   SharePoint: () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>, // Representing Org structure
   Code: () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>,
-  Link: () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+  Link: () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>,
+  Alert: () => <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
 };
 
 const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setView }) => {
@@ -62,6 +66,9 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
   const [isProcessing, setIsProcessing] = useState(false);
   const [processStep, setProcessStep] = useState<string>('');
   const [processProgress, setProcessProgress] = useState(0);
+  const [processError, setProcessError] = useState<string | null>(null);
+  /** Pending files: show row with filename + Save; process only when Save is clicked */
+  const [pendingUploads, setPendingUploads] = useState<{ id: string; file: File }[]>([]);
   
   // Web Crawler Inputs
   const [crawlUrl, setCrawlUrl] = useState('');
@@ -79,7 +86,7 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
 
   // Simulation State
   const [testQuery, setTestQuery] = useState('');
-  const [simulatedResponse, setSimulatedResponse] = useState<string | null>(null);
+  const [simulatedResult, setSimulatedResult] = useState<{ match: string; summary: string; source?: 'document' | 'web' } | null>(null);
 
   // Navigation Logic
   const currentFolders = folders.filter(f => f.parentId === currentFolderId);
@@ -133,17 +140,91 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
     }, 800);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  /** Add selected file to pending list (row with filename + Save). */
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = '';
+    const fileType = (file.name.split('.').pop() || '').toUpperCase();
+    if (!/^(PDF|TXT)$/i.test(fileType)) {
+      setProcessError(`Unsupported: ${file.name}. Use .txt or .pdf.`);
+      return;
+    }
+    setProcessError(null);
+    setPendingUploads(prev => [...prev, { id: crypto.randomUUID(), file }]);
+  };
 
-    simulateProcessing([
-      { p: 20, label: 'OCR & Text Extraction' },
-      { p: 45, label: 'Recursive Character Splitting' },
-      { p: 70, label: 'Generating Embeddings' },
-      { p: 90, label: 'Indexing into Vector Store' },
-      { p: 100, label: 'Complete' }
-    ], file.name.split('.').pop()?.toUpperCase() || 'DOC', file.name);
+  /** Run extract → chunk → embed for one file; then show chunks. Called when user clicks Save. */
+  const handleSavePendingFile = async (entry: { id: string; file: File }) => {
+    const { file } = entry;
+    setPendingUploads(prev => prev.filter(p => p.id !== entry.id));
+    setProcessError(null);
+    setIsProcessing(true);
+    setProcessProgress(5);
+    setProcessStep('Reading file…');
+
+    const fileType = (file.name.split('.').pop() || 'DOC').toUpperCase();
+
+    try {
+      setProcessStep('Extracting text…');
+      setProcessProgress(15);
+      const { text, error: extractError } = await extractTextFromFile(file);
+      if (extractError || !text) {
+        setProcessError(extractError || 'No text extracted');
+        setIsProcessing(false);
+        return;
+      }
+
+      setProcessStep('Splitting into chunks…');
+      setProcessProgress(35);
+      const chunkStrings = chunkText(text, 512, 50);
+      if (chunkStrings.length === 0) {
+        setProcessError('No chunks produced from text');
+        setIsProcessing(false);
+        return;
+      }
+
+      setProcessStep('Generating embeddings (Gemini)…');
+      setProcessProgress(50);
+      await embedTexts(chunkStrings);
+      setProcessProgress(85);
+      setProcessStep('Indexing chunks…');
+
+      const docId = Math.random().toString(36).substring(2, 11);
+      const chunks: KBChunk[] = chunkStrings.map((content, i) => ({
+        id: `chunk_${docId}_${i}`,
+        vectorId: `vec_${docId}_${i}`,
+        content,
+        tokenCount: approxTokenCount(content),
+        relevanceScore: undefined,
+      }));
+
+      const newDoc: KBDocument = {
+        id: docId,
+        name: file.name,
+        type: fileType,
+        size: `${(file.size / 1024).toFixed(1)} KB`,
+        folderId: currentFolderId,
+        status: 'Live',
+        department: 'General',
+        lastSync: 'Just now',
+        customTags: [],
+        chunks,
+      };
+
+      setDocs(prev => [newDoc, ...prev]);
+      setProcessProgress(100);
+      setProcessStep('Complete');
+      setIsIngestModalOpen(false);
+      setIsProcessing(false);
+      setProcessProgress(0);
+      setSelectedDoc(newDoc);
+      setActivePanelTab('chunks');
+      setIsPanelOpen(true);
+    } catch (err) {
+      setProcessError(err instanceof Error ? err.message : 'Processing failed');
+      setIsProcessing(false);
+    }
   };
 
   const handleWebCrawl = () => {
@@ -191,12 +272,52 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
     }
   };
 
-  const handleSimulateRetrieval = () => {
-    if(!testQuery) return;
-    setSimulatedResponse("Analysing...");
-    setTimeout(() => {
-       setSimulatedResponse("Matched Chunk: 'c1' (Score: 0.92). This document contains high relevance for the query based on vector proximity.");
-    }, 1000);
+  const handleSimulateRetrieval = async () => {
+    if (!testQuery || !selectedDoc) return;
+    setSimulatedResult({ match: 'Analysing…', summary: '' });
+    const chunks = selectedDoc.chunks || [];
+    if (chunks.length === 0) {
+      setSimulatedResult({ match: 'No chunks in this document.', summary: '' });
+      return;
+    }
+    try {
+      // Embed query + all chunks, then pick top-k by similarity (answer only from those)
+      const texts = [testQuery, ...chunks.map(c => c.content)];
+      const allEmbeddings = await embedTexts(texts);
+      if (!allEmbeddings.length || allEmbeddings.length < 2) {
+        setSimulatedResult({ match: 'Could not compute embeddings.', summary: '' });
+        return;
+      }
+      const queryVec = allEmbeddings[0];
+      const chunkVecs = allEmbeddings.slice(1);
+      const scored = chunkVecs.map((vec, i) => ({ index: i, score: cosineSimilarity(queryVec, vec) }));
+      scored.sort((a, b) => b.score - a.score);
+      const topK = 5;
+      const top = scored.slice(0, topK);
+      const context = top.map(t => chunks[t.index].content).join('\n\n');
+      let summary = await answerFromContext(context, testQuery);
+      const matchText = top.map(t => `Chunk ${t.index + 1} (${(t.score * 100).toFixed(0)}%)`).join(', ');
+      const notInDocument = /does not contain this information|excerpt does not contain/i.test(summary);
+      if (notInDocument) {
+        summary = await answerFromWeb(testQuery);
+        setSimulatedResult({
+          match: `Matched: ${matchText}. Answer generated from context.`,
+          summary,
+          source: 'web',
+        });
+      } else {
+        setSimulatedResult({
+          match: `Matched: ${matchText}. Answer from extracted chunks.`,
+          summary,
+          source: 'document',
+        });
+      }
+    } catch (err) {
+      setSimulatedResult({
+        match: 'Retrieval failed.',
+        summary: err instanceof Error ? err.message : 'Could not generate answer.',
+      });
+    }
   };
 
   return (
@@ -225,7 +346,7 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
         </div>
       </div>
 
-      {/* Processing Progress Bar */}
+      {/* Processing Progress Bar — shown only while processing */}
       {isProcessing && (
         <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
            <div className="flex justify-between items-center mb-2">
@@ -312,14 +433,14 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
       {/* --- INGESTION MODAL --- */}
       {isIngestModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => !isProcessing && setIsIngestModalOpen(false)}></div>
+           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => { if (!isProcessing) { setIsIngestModalOpen(false); setProcessError(null); } }}></div>
            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl relative z-10 overflow-hidden flex flex-col max-h-[90vh]">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                  <div>
                     <h2 className="text-lg font-bold text-slate-900">Connect Data Source</h2>
                     <p className="text-xs text-slate-500">Select an ingestion method to populate the knowledge base.</p>
                  </div>
-                 <button onClick={() => !isProcessing && setIsIngestModalOpen(false)} className="text-slate-400 hover:text-slate-600"><Icons.Close /></button>
+                 <button onClick={() => { if (!isProcessing) { setIsIngestModalOpen(false); setProcessError(null); } }} className="text-slate-400 hover:text-slate-600"><Icons.Close /></button>
               </div>
               
               <div className="flex flex-1 overflow-hidden">
@@ -347,12 +468,53 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
                  {/* Content */}
                  <div className="flex-1 p-8 overflow-y-auto">
                     {ingestTab === 'upload' && (
-                       <div className="flex flex-col items-center justify-center h-full border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 hover:bg-slate-50 transition-colors p-10 cursor-pointer" onClick={() => fileInputRef.current?.click()}>
-                          <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm mb-4 text-blue-600"><Icons.Upload /></div>
-                          <h3 className="text-sm font-bold text-slate-900">Click to upload documents</h3>
-                          <p className="text-xs text-slate-500 mt-2 mb-6 text-center max-w-xs">Supported formats: PDF, DOCX, TXT, CSV, XLSX. Maximum file size: 25MB.</p>
-                          <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
-                          <button className="px-6 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800">Select Files</button>
+                       <div className="space-y-4">
+                          {processError && (
+                            <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center gap-2">
+                              <Icons.Alert />
+                              <span className="flex-1">{processError}</span>
+                              <button type="button" onClick={() => setProcessError(null)} className="text-red-500 hover:text-red-700 font-medium">Dismiss</button>
+                            </div>
+                          )}
+                          {pendingUploads.length > 0 && (
+                            <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                              <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wide">Selected files — click Save to extract & chunk</div>
+                              <ul className="divide-y divide-slate-100">
+                                {pendingUploads.map((entry) => (
+                                  <li key={entry.id} className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-slate-50/50 transition-colors">
+                                    <span className="text-sm font-medium text-slate-900 truncate flex-1 min-w-0" title={entry.file.name}>{entry.file.name}</span>
+                                    <span className="text-xs text-slate-400 flex-shrink-0">{(entry.file.size / 1024).toFixed(1)} KB</span>
+                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSavePendingFile(entry)}
+                                        disabled={isProcessing}
+                                        className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        {isProcessing ? 'Processing…' : 'Save'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setPendingUploads(prev => prev.filter(p => p.id !== entry.id))}
+                                        disabled={isProcessing}
+                                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-50"
+                                        title="Remove"
+                                      >
+                                        <Icons.Close />
+                                      </button>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 hover:bg-slate-50 transition-colors p-10 cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+                            <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm mb-4 text-blue-600"><Icons.Upload /></div>
+                            <h3 className="text-sm font-bold text-slate-900">Click to upload documents</h3>
+                            <p className="text-xs text-slate-500 mt-2 mb-6 text-center max-w-xs">Supported: <strong>.txt</strong> and <strong>.pdf</strong>. Add file, then click <strong>Save</strong> to extract text and chunk.</p>
+                            <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.pdf,text/plain,application/pdf" onChange={handleFileSelect} />
+                            <button type="button" className="px-6 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800">Select Files</button>
+                          </div>
                        </div>
                     )}
 
@@ -569,30 +731,39 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
                    </div>
                 )}
 
-                {/* CHUNKS TAB */}
+                {/* CHUNKS TAB — table format */}
                 {activePanelTab === 'chunks' && (
-                   <div className="space-y-6">
+                   <div className="space-y-4">
                       <div className="flex justify-between items-center">
-                         <span className="text-xs font-bold text-slate-500">{selectedDoc.chunks?.length || 0} Vectors found</span>
-                         <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded">model: text-embedding-004</span>
+                         <span className="text-xs font-bold text-slate-500">{selectedDoc.chunks?.length || 0} chunks</span>
+                         <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded">Gemini gemini-embedding-001</span>
                       </div>
-                      
-                      <div className="space-y-4">
-                         {selectedDoc.chunks?.map((chunk, i) => (
-                            <div key={chunk.id} className="p-4 border border-slate-200 rounded-xl hover:border-blue-300 transition-all hover:shadow-sm">
-                               <div className="flex justify-between items-center mb-2">
-                                  <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{chunk.vectorId}</span>
-                                  <span className="text-[10px] font-bold text-slate-400">{chunk.tokenCount} tokens</span>
-                               </div>
-                               <p className="text-xs text-slate-600 leading-relaxed font-mono bg-slate-50 p-3 rounded-lg border border-slate-100">
-                                  {chunk.content}
-                               </p>
-                            </div>
-                         ))}
-                         {(!selectedDoc.chunks || selectedDoc.chunks.length === 0) && (
-                            <div className="text-center py-10 text-slate-400 text-sm">No vector chunks available. Please re-index.</div>
-                         )}
-                      </div>
+                      {selectedDoc.chunks && selectedDoc.chunks.length > 0 ? (
+                        <div className="border border-slate-200 rounded-xl overflow-hidden">
+                          <table className="w-full text-left text-sm">
+                            <thead>
+                              <tr className="text-xs font-semibold text-slate-500 bg-slate-50 border-b border-slate-200">
+                                <th className="px-4 py-3 w-12">#</th>
+                                <th className="px-4 py-3">Content</th>
+                                <th className="px-4 py-3 w-24 text-right">Tokens</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {selectedDoc.chunks.map((chunk, i) => (
+                                <tr key={chunk.id} className="hover:bg-slate-50/50 transition-colors align-top">
+                                  <td className="px-4 py-3 font-medium text-slate-600 align-top">{i + 1}</td>
+                                  <td className="px-4 py-3 text-slate-700 whitespace-pre-wrap break-words">
+                                    {chunk.content}
+                                  </td>
+                                  <td className="px-4 py-3 text-right text-slate-500 align-top">{chunk.tokenCount}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="text-center py-10 text-slate-400 text-sm border border-dashed border-slate-200 rounded-xl">No chunks. Upload a .txt or .pdf to extract and chunk.</div>
+                      )}
                    </div>
                 )}
 
@@ -615,10 +786,24 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
                          </button>
                       </div>
 
-                      {simulatedResponse && (
-                         <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl animate-in fade-in slide-in-from-top-2">
-                            <h5 className="text-xs font-bold text-emerald-700 mb-1">Simulation Result</h5>
-                            <p className="text-xs text-emerald-800 leading-relaxed">{simulatedResponse}</p>
+                      {simulatedResult && (
+                         <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl animate-in fade-in slide-in-from-top-2 space-y-4">
+                            <h5 className="text-xs font-bold text-emerald-700">Simulation Result</h5>
+                            <div>
+                               <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide mb-1">Matched chunk</div>
+                               <p className="text-xs text-emerald-800 leading-relaxed">{simulatedResult.match}</p>
+                            </div>
+                            {simulatedResult.summary && (
+                               <div>
+                                  <div className="flex items-center gap-2 mb-1">
+                                     <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide">Answer summary</span>
+                                  </div>
+                                  <p className="text-sm text-emerald-900 leading-relaxed">{simulatedResult.summary}</p>
+                               </div>
+                            )}
+                            {simulatedResult.match === 'Analysing…' && (
+                               <p className="text-xs text-emerald-600 animate-pulse">Generating answer…</p>
+                            )}
                          </div>
                       )}
                    </div>
@@ -627,10 +812,10 @@ const KnowledgeBaseManage: React.FC<{ setView: (v: AppView) => void }> = ({ setV
 
              {/* Footer Actions */}
              <div className="p-6 border-t border-slate-200 bg-slate-50 flex gap-3">
-                <button className="flex-1 py-3 border border-slate-300 bg-white text-slate-700 font-bold rounded-lg text-xs hover:bg-slate-50">
+                <button type="button" className="flex-1 py-3 border border-slate-300 bg-white text-slate-700 font-bold rounded-lg text-xs hover:bg-slate-50">
                    Force Re-Index
                 </button>
-                <button className="flex-1 py-3 bg-slate-900 text-white font-bold rounded-lg text-xs hover:bg-slate-800">
+                <button type="button" onClick={() => setIsPanelOpen(false)} className="flex-1 py-3 bg-slate-900 text-white font-bold rounded-lg text-xs hover:bg-slate-800">
                    Save Changes
                 </button>
              </div>

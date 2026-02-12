@@ -17,7 +17,29 @@ const Icons = {
   Refresh: () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
 };
 
-const CampaignCreate: React.FC<{ setView: (v: AppView) => void }> = ({ setView }) => {
+export interface TargetAudienceContact {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  segment: string;
+}
+
+const defaultTargetAudience: TargetAudienceContact[] = [
+  { id: '1', name: 'John Mark', email: 'John@unifuse.ai', phone: '+918582821457', segment: 'Admitted Students' },
+  { id: '2', name: 'Deepesh Reddy', email: 'Deepesh.reddy@unifuse.ai', phone: '+918884773773', segment: 'Admitted Students' },
+];
+
+function audienceToSegment(audience: string): string {
+  return audience.replace(/\s*\([^)]*\)\s*$/, '').trim() || audience;
+}
+
+interface CampaignCreateProps {
+  setView: (v: AppView) => void;
+  onAddCampaign: (campaign: { name: string; channels: ('Email' | 'SMS' | 'Voice' | 'WhatsApp')[]; status: 'Active' | 'Scheduled' | 'Draft' | 'Completed' | 'Paused'; audience: string; audienceSize: number; engagement: number; lastUpdated: string }) => void;
+}
+
+const CampaignCreate: React.FC<CampaignCreateProps> = ({ setView, onAddCampaign }) => {
   // Navigation State
   const [step, setStep] = useState(1);
   const [creationPath, setCreationPath] = useState<'ai' | 'template' | 'manual' | null>(null);
@@ -28,12 +50,14 @@ const CampaignCreate: React.FC<{ setView: (v: AppView) => void }> = ({ setView }
   const [goal, setGoal] = useState('Yield (Deposit)');
   const [contextNotes, setContextNotes] = useState('');
   const [selectedChannels, setSelectedChannels] = useState<string[]>(['Email']);
+  const [targetAudienceContacts, setTargetAudienceContacts] = useState<TargetAudienceContact[]>(defaultTargetAudience);
 
   // Step 2: Content State
   const [aiPrompt, setAiPrompt] = useState('');
   const [generatedCopy, setGeneratedCopy] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [isLaunching, setIsLaunching] = useState(false);
 
   // Mock Templates
   const templates = [
@@ -153,6 +177,39 @@ const CampaignCreate: React.FC<{ setView: (v: AppView) => void }> = ({ setView }
                          <option>Alumni - Last Gift &gt; 2 Years</option>
                       </select>
                    </div>
+                </div>
+             </div>
+
+             {/* Target Audience table — segment name comes from dropdown above */}
+             <div className="space-y-4">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block">Target Audience — Contacts</label>
+                <p className="text-xs text-slate-400">SMS will be sent to all contacts whose Segment matches the selected Target Audience when you launch.</p>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wide">Name</th>
+                        <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wide">Email</th>
+                        <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wide">Phone</th>
+                        <th className="text-left px-4 py-3 font-bold text-slate-500 uppercase tracking-wide">Segment</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {targetAudienceContacts.map((c) => (
+                        <tr key={c.id} className="hover:bg-slate-50/50">
+                          <td className="px-4 py-3 font-medium text-slate-900">{c.name}</td>
+                          <td className="px-4 py-3 text-slate-600">{c.email}</td>
+                          <td className="px-4 py-3 text-slate-600">{c.phone}</td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-xs font-medium">
+                              <Icons.UserGroup />
+                              {c.segment}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
              </div>
 
@@ -394,10 +451,57 @@ const CampaignCreate: React.FC<{ setView: (v: AppView) => void }> = ({ setView }
            )}
            {step === 3 && (
               <button 
-                onClick={() => setView('campaigns')}
-                className="px-8 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-md"
+                disabled={isLaunching}
+                onClick={async () => {
+                  setIsLaunching(true);
+                  try {
+                    const smsBody = generatedCopy
+                      ? generatedCopy.replace(/\s+/g, ' ').trim().slice(0, 160) || undefined
+                      : undefined;
+                    const segment = audienceToSegment(audience);
+                    const matchingContacts = targetAudienceContacts.filter(
+                      c => c.segment.trim().toLowerCase() === segment.trim().toLowerCase()
+                    );
+                    const toNumbers = matchingContacts.map(c => c.phone).filter(Boolean);
+                    const payload: { body?: string; to?: string[] } = smsBody != null ? { body: smsBody } : {};
+                    if (toNumbers.length > 0) {
+                      payload.to = toNumbers;
+                    }
+                    const res = await fetch('/api/send-sms', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload),
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                      const channels = selectedChannels as ('Email' | 'SMS' | 'Voice' | 'WhatsApp')[];
+                      onAddCampaign({
+                        name: name || 'Untitled Campaign',
+                        channels: channels.length ? channels : ['Email'],
+                        status: 'Active',
+                        audience: audience,
+                        audienceSize: matchingContacts.length,
+                        engagement: 0,
+                        lastUpdated: 'Just now',
+                      });
+                      const sent = data.sent ?? (toNumbers.length > 0 ? toNumbers.length : 1);
+                      alert(`Campaign launched! SMS sent to ${sent} recipient(s) from the target audience.`);
+                      setView('campaigns');
+                    } else {
+                      const err = data.results?.length
+                        ? data.results.map((r: { to: string; error?: string }) => `${r.to}: ${r.error || 'failed'}`).join('; ')
+                        : (data.error || 'Unknown error');
+                      alert('SMS failed: ' + err);
+                    }
+                  } catch (e) {
+                    alert('Failed to send SMS: ' + (e instanceof Error ? e.message : 'Network error'));
+                  } finally {
+                    setIsLaunching(false);
+                  }
+                }}
+                className="px-8 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                 Launch Campaign
+                 {isLaunching ? 'Sending SMS…' : 'Launch Campaign'}
               </button>
            )}
         </div>

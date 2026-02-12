@@ -1,6 +1,17 @@
 
 import React from 'react';
 
+export interface Campaign {
+  id: number;
+  name: string;
+  channels: ('Email' | 'SMS' | 'Voice' | 'WhatsApp')[];
+  status: 'Active' | 'Scheduled' | 'Draft' | 'Completed' | 'Paused';
+  audience: string;
+  audienceSize: number;
+  engagement: number;
+  lastUpdated: string;
+}
+
 export type AppView = 
   | 'login' 
   | 'forgot-password'

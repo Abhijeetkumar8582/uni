@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { AppView } from '../types';
+import { AppView, Campaign } from '../types';
 
 // Professional SVG Icons
 const Icons = {
@@ -15,27 +15,9 @@ const Icons = {
   Users: () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
 };
 
-interface Campaign {
-  id: number;
-  name: string;
-  channels: ('Email' | 'SMS' | 'Voice')[];
-  status: 'Active' | 'Scheduled' | 'Draft' | 'Completed' | 'Paused';
-  audience: string;
-  audienceSize: number;
-  engagement: number;
-  lastUpdated: string;
-}
-
-const CampaignManager: React.FC<{ setView: (v: AppView) => void }> = ({ setView }) => {
+const CampaignManager: React.FC<{ setView: (v: AppView) => void; campaigns: Campaign[] }> = ({ setView, campaigns }) => {
   const [activeTab, setActiveTab] = useState<string>('active');
   const [searchQuery, setSearchQuery] = useState('');
-
-  const campaigns: Campaign[] = [
-    { id: 1, name: 'Fall 2026 Welcome Sequence', channels: ['Email', 'SMS'], status: 'Active', audience: 'Admitted Students', audienceSize: 2847, engagement: 68, lastUpdated: '2h ago' },
-    { id: 2, name: 'Financial Aid Retention Push', channels: ['Email', 'Voice'], status: 'Active', audience: 'At-Risk Enrollees', audienceSize: 1892, engagement: 54, lastUpdated: '5h ago' },
-    { id: 3, name: 'Deposit Deadline Nurture', channels: ['SMS'], status: 'Scheduled', audience: 'Pending Deposit', audienceSize: 840, engagement: 0, lastUpdated: 'Jan 15' },
-    { id: 4, name: 'Regional Outreach (Domestic)', channels: ['Email'], status: 'Paused', audience: 'Prospects (East Coast)', audienceSize: 4200, engagement: 32, lastUpdated: '3d ago' },
-  ];
 
   const filteredCampaigns = useMemo(() => {
     return campaigns.filter(c => {
@@ -141,7 +123,7 @@ const CampaignManager: React.FC<{ setView: (v: AppView) => void }> = ({ setView 
                            <div className="flex items-center gap-2 mt-1">
                              {campaign.channels.map(ch => (
                                <span key={ch} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] text-slate-500">
-                                 {ch === 'Email' ? <Icons.Mail /> : ch === 'SMS' ? <Icons.Message /> : <Icons.Phone />}
+                                 {ch === 'Email' ? <Icons.Mail /> : ch === 'SMS' || ch === 'WhatsApp' ? <Icons.Message /> : <Icons.Phone />}
                                  {ch}
                                </span>
                              ))}
