@@ -7,6 +7,37 @@ interface ChatOverlayProps {
   onClose: () => void;
 }
 
+/** Renders a segment of text with **bold** markdown. */
+function renderBold(text: string, keyPrefix: string): React.ReactNode {
+  const parts = text.split(/\*\*(.+?)\*\*/g);
+  return parts.map((part, i) =>
+    i % 2 === 1 ? <strong key={`${keyPrefix}-b-${i}`}>{part}</strong> : part
+  );
+}
+
+/** Renders message with **bold** and ``` code blocks ``` (no XSS, no extra deps). */
+function renderMessageContent(content: string): React.ReactNode {
+  const blocks = content.split(/(```[\w]*\n?[\s\S]*?```)/g);
+  return blocks.map((block, i) => {
+    const key = `block-${i}`;
+    if (block.startsWith('```') && block.endsWith('```')) {
+      const inner = block.slice(3, -3).replace(/^\n?/, '');
+      const firstNewline = inner.indexOf('\n');
+      const lang = firstNewline >= 0 ? inner.slice(0, firstNewline).trim() : '';
+      const code = firstNewline >= 0 ? inner.slice(firstNewline + 1) : inner;
+      return (
+        <pre
+          key={key}
+          className="mt-2 mb-2 p-3 rounded-xl bg-slate-100 border border-slate-200 overflow-x-auto text-xs font-mono text-slate-800"
+        >
+          <code>{code}</code>
+        </pre>
+      );
+    }
+    return <React.Fragment key={key}>{renderBold(block, key)}</React.Fragment>;
+  });
+}
+
 const ChatOverlay: React.FC<ChatOverlayProps> = ({ onClose }) => {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: "Hello! I'm your Unifuse AI Assistant. How can I help you manage your enrollment hub today?" }
@@ -69,12 +100,12 @@ const ChatOverlay: React.FC<ChatOverlayProps> = ({ onClose }) => {
             }`}>
               {m.role === 'user' ? 'JD' : '⚡'}
             </div>
-            <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
+            <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm whitespace-pre-wrap ${
               m.role === 'user' 
                 ? 'bg-blue-600 text-white rounded-tr-none' 
                 : 'bg-white text-slate-800 rounded-tl-none border border-slate-100'
             }`}>
-              {m.content}
+              {m.role === 'assistant' ? renderMessageContent(m.content) : m.content}
             </div>
           </div>
         ))}
