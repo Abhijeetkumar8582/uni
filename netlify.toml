@@ -1,0 +1,28 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/embed"
+  to = "/.netlify/functions/embed"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/chat"
+  to = "/.netlify/functions/chat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/answer-from-context"
+  to = "/.netlify/functions/answer-from-context"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/answer-from-web"
+  to = "/.netlify/functions/answer-from-web"
+  status = 200
+  force = true

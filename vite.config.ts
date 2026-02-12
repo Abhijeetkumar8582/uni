@@ -79,6 +79,83 @@ export default defineConfig(({ mode }) => {
           },
         },
         {
+          name: 'api-gemini',
+          configureServer(server) {
+            server.middlewares.use(async (req, res, next) => {
+              const url = req.url?.split('?')[0];
+              if (!url || req.method !== 'POST') return next();
+              if (url !== '/api/chat' && url !== '/api/answer-from-context' && url !== '/api/answer-from-web') return next();
+              if (!geminiApiKey?.trim()) {
+                res.setHeader('Content-Type', 'application/json');
+                res.statusCode = 500;
+                res.end(JSON.stringify({ ok: false, error: 'GEMINI_API_KEY not set in .env.local' }));
+                return;
+              }
+              let body = '';
+              req.on('data', (chunk) => { body += chunk; });
+              req.on('end', async () => {
+                res.setHeader('Content-Type', 'application/json');
+                try {
+                  const { GoogleGenAI } = await import('@google/genai');
+                  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+                  if (url === '/api/chat') {
+                    const json = body ? JSON.parse(body) : {};
+                    const messages = Array.isArray(json.messages) ? json.messages : [];
+                    const contents = messages.map((m: { role: string; content: string }) => ({
+                      role: m.role === 'assistant' ? 'model' : 'user',
+                      parts: [{ text: m.content }],
+                    }));
+                    const SYSTEM = `You are the Unicore AI Orchestrator, the central intelligence of the Unifuse platform. You coordinate between specialized Expert Nodes: Enrollment, Student Success, Advancement, and Operations. Be professional, concise, and helpful.`;
+                    const response = await ai.models.generateContent({
+                      model: 'gemini-2.0-flash',
+                      contents,
+                      config: { systemInstruction: SYSTEM },
+                    });
+                    const text = response.text || "I'm sorry, I couldn't generate a response.";
+                    res.statusCode = 200;
+                    res.end(JSON.stringify({ ok: true, text }));
+                    return;
+                  }
+                  if (url === '/api/answer-from-context') {
+                    const json = body ? JSON.parse(body) : {};
+                    const context = typeof json.context === 'string' ? json.context : '';
+                    const question = typeof json.question === 'string' ? json.question : '';
+                    const truncated = context.length > 8000 ? context.slice(0, 8000) + '…' : context;
+                    const sys = `Answer ONLY using the document excerpt. If the excerpt does not contain the answer, respond exactly with "The excerpt does not contain this information."`;
+                    const prompt = `Document excerpt:\n\n${truncated}\n\nQuestion: ${question}`;
+                    const response = await ai.models.generateContent({
+                      model: 'gemini-2.0-flash',
+                      contents: prompt,
+                      config: { systemInstruction: sys },
+                    });
+                    const text = response.text?.trim() || 'No answer generated.';
+                    res.statusCode = 200;
+                    res.end(JSON.stringify({ ok: true, text }));
+                    return;
+                  }
+                  if (url === '/api/answer-from-web') {
+                    const json = body ? JSON.parse(body) : {};
+                    const question = typeof json.question === 'string' ? json.question : '';
+                    const sys = `Answer the user's question concisely (1–3 sentences) using general knowledge. Be accurate and cite that this is general knowledge.`;
+                    const response = await ai.models.generateContent({
+                      model: 'gemini-2.0-flash',
+                      contents: question,
+                      config: { systemInstruction: sys },
+                    });
+                    const text = response.text?.trim() || 'No answer generated.';
+                    res.statusCode = 200;
+                    res.end(JSON.stringify({ ok: true, text }));
+                    return;
+                  }
+                } catch (err) {
+                  res.statusCode = 500;
+                  res.end(JSON.stringify({ ok: false, error: String(err && (err as Error).message) }));
+                }
+              });
+            });
+          },
+        },
+        {
           name: 'twilio-send-sms',
           configureServer(server) {
             server.middlewares.use((req, res, next) => {
@@ -156,9 +233,6 @@ export default defineConfig(({ mode }) => {
           },
         },
       ],
-      define: {
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
