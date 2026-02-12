@@ -26,3 +26,9 @@
   to = "/.netlify/functions/answer-from-web"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/api/send-sms"
+  to = "/.netlify/functions/send-sms"
+  status = 200
+  force = true

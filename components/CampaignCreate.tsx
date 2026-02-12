@@ -14,7 +14,8 @@ const Icons = {
   Layout: () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>,
   Code: () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>,
   Template: () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg>,
-  Refresh: () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+  Refresh: () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
+  Pencil: () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>,
 };
 
 export interface TargetAudienceContact {
@@ -58,6 +59,8 @@ const CampaignCreate: React.FC<CampaignCreateProps> = ({ setView, onAddCampaign 
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
+  const [editingPhoneId, setEditingPhoneId] = useState<string | null>(null);
+  const [editingPhoneValue, setEditingPhoneValue] = useState('');
 
   // Mock Templates
   const templates = [
@@ -199,7 +202,62 @@ const CampaignCreate: React.FC<CampaignCreateProps> = ({ setView, onAddCampaign 
                         <tr key={c.id} className="hover:bg-slate-50/50">
                           <td className="px-4 py-3 font-medium text-slate-900">{c.name}</td>
                           <td className="px-4 py-3 text-slate-600">{c.email}</td>
-                          <td className="px-4 py-3 text-slate-600">{c.phone}</td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {editingPhoneId === c.id ? (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="tel"
+                                  value={editingPhoneValue}
+                                  onChange={(e) => setEditingPhoneValue(e.target.value)}
+                                  className="w-36 px-2 py-1.5 text-sm border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                                  placeholder="+1 234 567 8900"
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTargetAudienceContacts(prev =>
+                                      prev.map(contact =>
+                                        contact.id === c.id ? { ...contact, phone: editingPhoneValue.trim() || contact.phone } : contact
+                                      )
+                                    );
+                                    setEditingPhoneId(null);
+                                    setEditingPhoneValue('');
+                                  }}
+                                  className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                                  title="Save"
+                                >
+                                  <Icons.Check />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingPhoneId(null);
+                                    setEditingPhoneValue('');
+                                  }}
+                                  className="p-1 text-slate-400 hover:bg-slate-100 rounded"
+                                  title="Cancel"
+                                >
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-2">
+                                {c.phone}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingPhoneId(c.id);
+                                    setEditingPhoneValue(c.phone);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                  title="Edit phone number"
+                                >
+                                  <Icons.Pencil />
+                                </button>
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-xs font-medium">
                               <Icons.UserGroup />
@@ -472,7 +530,17 @@ const CampaignCreate: React.FC<CampaignCreateProps> = ({ setView, onAddCampaign 
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(payload),
                     });
-                    const data = await res.json();
+                    const text = await res.text();
+                    let data: { ok?: boolean; sent?: number; error?: string; results?: { to: string; error?: string }[] } = {};
+                    if (text) {
+                      try {
+                        data = JSON.parse(text);
+                      } catch {
+                        data = { ok: false, error: 'Invalid response from server' };
+                      }
+                    } else {
+                      data = { ok: false, error: res.ok ? 'Empty response' : (res.statusText || `Request failed (${res.status})`) };
+                    }
                     if (data.ok) {
                       const channels = selectedChannels as ('Email' | 'SMS' | 'Voice' | 'WhatsApp')[];
                       onAddCampaign({
